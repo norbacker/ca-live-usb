@@ -1,0 +1,13 @@
+[Unit]
+Description=CA Data Partition
+DefaultDependencies=no
+After=local-fs-pre.target
+
+[Mount]
+What=LABEL=CA-DATA
+Where=/mnt/cadata
+Type=ext4
+Options=defaults,nofail
+
+[Install]
+WantedBy=local-fs.target
