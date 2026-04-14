@@ -1,0 +1,13 @@
+#!/bin/sh
+set -e
+
+# Mask network management services — they cannot be started even manually
+systemctl mask NetworkManager.service
+systemctl mask systemd-networkd.service
+systemctl mask networking.service
+systemctl mask wpa_supplicant.service
+systemctl mask ModemManager.service
+systemctl mask bluetooth.service
+
+# Enable drop-all firewall as defense in depth
+systemctl enable nftables.service
