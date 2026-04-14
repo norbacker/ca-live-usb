@@ -27,6 +27,6 @@ WORKDIR /workspace
 
 COPY build-image.sh /usr/local/bin/build-image.sh
 COPY build-cadata.sh /usr/local/bin/build-cadata.sh
-COPY config /workspace/config
+COPY config /build-config
 
 CMD ["bash", "-c", "build-image.sh && build-cadata.sh"]
