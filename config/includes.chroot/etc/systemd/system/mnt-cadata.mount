@@ -6,8 +6,8 @@ After=local-fs-pre.target
 [Mount]
 What=LABEL=CA-DATA
 Where=/mnt/cadata
-Type=ext4
-Options=defaults,nofail
+Type=f2fs
+Options=defaults,discard,nofail
 
 [Install]
 WantedBy=local-fs.target

@@ -27,6 +27,7 @@ cmd_install() {
   local cid
   cid=$(docker create --platform $PLATFORM -v "$VOLUME":/workspace "$IMAGE")
   docker cp "$cid":/workspace/live-image-amd64.hybrid.iso build/
+  docker cp "$cid":/workspace/cadata.img build/
   docker rm "$cid"
 }
 
@@ -39,6 +40,7 @@ cmd_clean() {
   docker image rm -f "$IMAGE"
   cmd_prune
   rm build/live-image-amd64.hybrid.iso
+  rm build/cadata.img
 }
 
 cmd_help() {

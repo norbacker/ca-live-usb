@@ -13,6 +13,7 @@ RUN apt-get update && apt-get install -y \
     grub-efi-amd64-bin \
     mtools \
     dosfstools \
+    f2fs-tools \
     curl \
     git \
     ca-certificates \
@@ -25,6 +26,7 @@ RUN apt-get install -y \
 WORKDIR /workspace
 
 COPY build-image.sh /usr/local/bin/build-image.sh
+COPY build-cadata.sh /usr/local/bin/build-cadata.sh
 COPY config /workspace/config
 
-CMD ["build-image.sh"]
+CMD ["bash", "-c", "build-image.sh && build-cadata.sh"]

@@ -1,15 +1,16 @@
 #!/bin/bash
 # prepare-usb.sh <iso> <device>
 #
-# Writes the live image to a USB drive and creates the writable
-# CA data partition (LABEL=CA-DATA) in the remaining space.
+# Writes the live image to a USB drive and writes the pre-built
+# CA data image (cadata.img) to a new partition in the remaining space.
 #
-# Requires: dd, parted, sgdisk (gdisk), mkfs.ext4, partprobe
+# Requires: dd, parted, sgdisk (gdisk), partprobe
 
 set -euo pipefail
 
 ISO=${1:-}
 DEV=${2:-}
+CA_DATA_IMG=$(dirname "${ISO:-x}")/cadata.img
 
 usage() {
   echo "Usage: $0 <iso> <device>"
@@ -18,6 +19,7 @@ usage() {
 }
 
 [[ -f "$ISO" ]] || { echo "ISO not found: $ISO"; usage; }
+[[ -f "$CA_DATA_IMG" ]] || { echo "CA data image not found: $CA_DATA_IMG"; usage; }
 [[ -b "$DEV" ]] || { echo "Not a block device: $DEV"; usage; }
 
 echo "Target device: $DEV"
@@ -43,7 +45,7 @@ echo "==> Creating CA data partition in remaining space ..."
 LAST_END=$(parted -s "$DEV" unit s print \
   | awk '/^ [0-9]/{last=$3} END{print last}' \
   | tr -d 's')
-parted -s "$DEV" mkpart primary ext4 $((LAST_END + 1))s 100%
+parted -s "$DEV" mkpart primary linux-data $((LAST_END + 1))s 100%
 
 # Re-read partition table
 partprobe "$DEV"
@@ -58,23 +60,8 @@ else
 fi
 
 echo
-echo "==> Formatting $PART with label CA-DATA ..."
-mkfs.ext4 -L CA-DATA "$PART"
-
-echo
-echo "==> Initialising directory structure on $PART ..."
-MNTDIR=$(mktemp -d)
-mount "$PART" "$MNTDIR"
-mkdir -p \
-  "$MNTDIR/ca/private" \
-  "$MNTDIR/ca/certs" \
-  "$MNTDIR/ca/newcerts" \
-  "$MNTDIR/ca/crl" \
-  "$MNTDIR/ca/csr" \
-  "$MNTDIR/audit"
-chmod 700 "$MNTDIR/ca/private"
-umount "$MNTDIR"
-rmdir "$MNTDIR"
+echo "==> Writing CA data image to $PART ..."
+dd if="$CA_DATA_IMG" of="$PART" bs=4M status=progress conv=fsync
 
 echo
 echo "Done. USB is ready: $DEV"
