@@ -24,11 +24,27 @@ and runs the build. The resulting ISO is written to `build/`.
 
 ## Customization
 
-To customise the image, edit files under `config/` before building:
+Customizations live in `config/` using the standard live-build mechanisms:
+`package-lists/` for extra packages, `hooks/` for build-time scripts, and
+`includes.chroot/` for files placed verbatim into the image.
 
-- `config/package-lists/` — extra packages to install (one per line, `*.list.chroot`)
-- `config/includes.chroot/` — files copied verbatim into the live system (e.g. `opt/ca/` → `/opt/ca/`)
-- `config/hooks/` — scripts run during the build (`*.hook.chroot`)
+### Air-gap
+
+The image is hardened to prevent access to the host's storage and network.
+Internal disk controllers (SATA, NVMe, IDE) and network adapters (Wi-Fi,
+Bluetooth, common wired NICs) are blacklisted at the kernel module level.
+Network-management services are disabled and a default-deny firewall blocks all
+traffic.
+
+### Writable CA-DATA partition
+
+The root filesystem is read-only. A separate partition labelled `CA-DATA` (f2fs)
+is mounted read-write at `/mnt/cadata` and holds the CA keypair, audit logs,
+and other persistent data.
+
+### CA application
+
+The CA tooling is installed under `/opt/ca/`.
 
 ## Test
 

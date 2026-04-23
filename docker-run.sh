@@ -6,7 +6,7 @@ VOLUME=live-build-work
 PLATFORM=linux/amd64
 
 cmd_build() {
-  docker build -t "$IMAGE" .
+  docker build --platform $PLATFORM -t "$IMAGE" .
 }
 
 cmd_run() {
