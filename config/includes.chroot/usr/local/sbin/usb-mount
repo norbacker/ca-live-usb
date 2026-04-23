@@ -1,0 +1,50 @@
+#!/bin/bash
+set -euo pipefail
+
+DEVBASE="$1"
+ACTION="$2"
+DEVICE="/dev/${DEVBASE}"
+MOUNT_POINT="/media/usb"
+ALLOWED_FS="vfat exfat ext2 ext3 ext4"
+
+case "$ACTION" in
+    mount)
+        # Reject if the single shared mount point is already occupied
+        if mountpoint -q "${MOUNT_POINT}" 2>/dev/null; then
+            audit-log usb-mount.log "DENIED device=${DEVICE} reason=already_occupied"
+            echo "USB mount point already in use; only one device may be mounted at a time" >&2
+            exit 1
+        fi
+
+        FSTYPE="$(blkid -o value -s TYPE  "${DEVICE}" 2>/dev/null || true)"
+        LABEL="$( blkid -o value -s LABEL "${DEVICE}" 2>/dev/null || true)"
+
+        # Reject absent or disallowed filesystem types
+        if [[ -z "${FSTYPE}" ]] || ! echo "${ALLOWED_FS}" | grep -qw "${FSTYPE}"; then
+            audit-log usb-mount.log "DENIED device=${DEVICE} fstype=${FSTYPE:-unknown} label=${LABEL:-} reason=disallowed_fstype"
+            echo "Filesystem type '${FSTYPE:-unknown}' is not permitted" >&2
+            exit 1
+        fi
+
+        mkdir -p "${MOUNT_POINT}"
+        mount -t "${FSTYPE}" -o noexec,nosuid,nodev "${DEVICE}" "${MOUNT_POINT}"
+        audit-log usb-mount.log "MOUNT  device=${DEVICE} fstype=${FSTYPE} label=${LABEL:-} mountpoint=${MOUNT_POINT}"
+        ;;
+
+    umount)
+        FSTYPE="$(blkid -o value -s TYPE  "${DEVICE}" 2>/dev/null || true)"
+        LABEL="$( blkid -o value -s LABEL "${DEVICE}" 2>/dev/null || true)"
+
+        # Unmount by mount point; the device node may already be gone
+        if mountpoint -q "${MOUNT_POINT}" 2>/dev/null; then
+            umount "${MOUNT_POINT}"
+            audit-log usb-mount.log "UMOUNT device=${DEVICE} fstype=${FSTYPE:-} label=${LABEL:-} mountpoint=${MOUNT_POINT}"
+        fi
+        rmdir --ignore-fail-on-non-empty "${MOUNT_POINT}" 2>/dev/null || true
+        ;;
+
+    *)
+        echo "Usage: $0 DEVICE {mount|umount}" >&2
+        exit 1
+        ;;
+esac

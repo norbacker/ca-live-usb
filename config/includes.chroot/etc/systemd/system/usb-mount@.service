@@ -1,0 +1,11 @@
+[Unit]
+Description=Mount USB storage device /dev/%i
+BindsTo=dev-%i.device
+Requires=mnt-cadata.mount
+After=dev-%i.device mnt-cadata.mount
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/usb-mount %i mount
+ExecStop=/usr/local/sbin/usb-mount %i umount

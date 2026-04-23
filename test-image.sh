@@ -3,9 +3,11 @@ set -euo pipefail
 
 ISO=build/live-image-amd64.hybrid.iso
 CA_DATA_IMG=build/cadata.img
+TEST_USB_IMG=build/test-usb.img
 
 [[ -f "$ISO" ]] || { echo "ISO not found: $ISO  (run ./docker-run.sh install first)"; exit 1; }
 [[ -f "$CA_DATA_IMG" ]] || { echo "CA data image not found: $CA_DATA_IMG  (run ./docker-run.sh install first)"; exit 1; }
+[[ -f "$TEST_USB_IMG" ]] || { echo "Test USB image not found: $TEST_USB_IMG  (run ./docker-run.sh install first)"; exit 1; }
 
 if [[ -r /dev/kvm ]]; then
   kvm_flags=(-enable-kvm -cpu host)
@@ -18,6 +20,9 @@ qemu-system-x86_64 \
   -cdrom "$ISO" \
   -boot d \
   -drive "file=$CA_DATA_IMG,format=raw,if=virtio,media=disk" \
+  -drive "if=none,id=usbstick,file=$TEST_USB_IMG,format=raw" \
+  -device qemu-xhci \
+  -device usb-storage,drive=usbstick \
   "${kvm_flags[@]}" \
   -smp 2 \
   -vga virtio \

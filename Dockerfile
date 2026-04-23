@@ -14,6 +14,7 @@ RUN apt-get update && apt-get install -y \
     mtools \
     dosfstools \
     f2fs-tools \
+    fdisk \
     curl \
     git \
     ca-certificates \
@@ -26,7 +27,7 @@ RUN apt-get install -y \
 WORKDIR /workspace
 
 COPY build-image.sh /usr/local/bin/build-image.sh
-COPY build-cadata.sh /usr/local/bin/build-cadata.sh
+COPY build-usb-images.sh /usr/local/bin/build-usb-images.sh
 COPY config /build-config
 
-CMD ["bash", "-c", "build-image.sh && build-cadata.sh"]
+CMD ["bash", "-c", "build-image.sh && build-usb-images.sh"]

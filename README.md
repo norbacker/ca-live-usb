@@ -6,7 +6,7 @@ Based on Debian [live-build](https://salsa.debian.org/live-team/live-build).
 ## Requirements
 
 - `docker` if `lb` and requirements are not installed on the local host
-- `qemu-system-x86_64` for testing
+- `qemu-system-x86_64` and `ovmf` for testing
 
 ## Build
 
@@ -20,7 +20,8 @@ Or through docker:
 ./docker-run.sh
 ```
 This builds the Docker image, creates a persistent volume for the build workspace,
-and runs the build. The resulting ISO is written to `build/`.
+and runs the build. The resulting ISO, CA-DATA image, and test USB image are
+written to `build/`.
 
 ## Customization
 
@@ -42,6 +43,12 @@ The root filesystem is read-only. A separate partition labelled `CA-DATA` (f2fs)
 is mounted read-write at `/mnt/cadata` and holds the CA keypair, audit logs,
 and other persistent data.
 
+### USB automount
+
+Inserting a USB storage device automatically mounts it at `/media/usb`. Only
+one device may be mounted at a time, exotic filesystems are rejected, and all
+mount and unmount events are audit logged to `/mnt/cadata/audit/usb-mount.log`.
+
 ### CA application
 
 The CA tooling is installed under `/opt/ca/`.
@@ -52,4 +59,6 @@ The CA tooling is installed under `/opt/ca/`.
 ./test-image.sh
 ```
 
-Boots `build/live-image-amd64.hybrid.iso` in QEMU with KVM.
+Boots `build/live-image-amd64.hybrid.iso` in QEMU with UEFI and KVM. The
+CA-DATA image is attached as a virtio disk and the test USB image as a USB
+mass storage device to exercise automount.

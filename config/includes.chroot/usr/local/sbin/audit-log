@@ -1,0 +1,17 @@
+#!/bin/bash
+set -euo pipefail
+
+# Usage: audit-log <log-basename> <message>
+LOG_NAME="$1"
+shift
+MESSAGE="$*"
+
+AUDIT_DIR="/mnt/cadata/audit"
+
+if ! mountpoint -q /mnt/cadata; then
+    echo "audit-log: /mnt/cadata is not mounted" >&2
+    exit 1
+fi
+
+mkdir -p "${AUDIT_DIR}"
+printf '%s %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "${MESSAGE}" >> "${AUDIT_DIR}/${LOG_NAME}"
