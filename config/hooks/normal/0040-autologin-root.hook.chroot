@@ -1,0 +1,8 @@
+#!/bin/sh
+set -e
+
+# Run ca-menu directly as root on tty1 via a dedicated service rather than
+# relying on live-config autologin, which defaults to the unprivileged 'user'
+# account and cannot be reliably overridden at build time.
+systemctl enable ca-menu.service
+systemctl mask getty@tty1.service

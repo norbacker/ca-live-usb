@@ -1,0 +1,282 @@
+#!/bin/bash
+set -euo pipefail
+
+trap 'exit 130' INT   # Ctrl-C: exit and let systemd restart the menu
+trap 'exit 0'   TERM  # systemd stop (e.g. shutdown): exit cleanly, no restart
+
+if [[ $EUID -ne 0 ]]; then
+    echo "ca-menu must be run as root." >&2
+    exit 1
+fi
+
+PRIVATE_DIR=/mnt/cadata/ca/private
+CERTS_DIR=/mnt/cadata/ca/certs
+USB_MOUNT=/media/usb
+USB_CERTS_DIR=$USB_MOUNT/certs
+USB_REQUESTS_DIR=$USB_MOUNT/requests
+AUDIT_LOG=menu.log
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+log() {
+    audit-log "$AUDIT_LOG" "$*"
+}
+
+pause() {
+    echo ""
+    read -rp "Press Enter to continue..."
+}
+
+usb_mounted() {
+    mountpoint -q "$USB_MOUNT" 2>/dev/null
+}
+
+# Return the RSA bit size for a private key file, or "?" on failure.
+key_bits() {
+    openssl pkey -in "$1" -text -noout 2>/dev/null \
+        | grep -oP '\d+(?= bit)' | head -1 || echo "?"
+}
+
+# Return the RSA bit size for a public key file, or "?" on failure.
+pubkey_bits() {
+    openssl pkey -pubin -in "$1" -text -noout 2>/dev/null \
+        | grep -oP '\d+(?= bit)' | head -1 || echo "?"
+}
+
+# ── Startup check ─────────────────────────────────────────────────────────────
+
+if ! mountpoint -q /mnt/cadata 2>/dev/null; then
+    echo "FATAL: /mnt/cadata is not mounted." >&2
+    exit 1
+fi
+
+log "STARTUP"
+
+# ── Operations ────────────────────────────────────────────────────────────────
+
+do_create_keypair() {
+    echo ""
+    echo "=== Create CA keypair ==="
+    echo ""
+
+    read -rp "  CA name (letters, digits, hyphens, underscores): " name
+    if [[ -z "$name" || ! "$name" =~ ^[A-Za-z0-9_-]+$ ]]; then
+        echo "  Invalid name."
+        return
+    fi
+    if [[ -f "$PRIVATE_DIR/$name.key.pem" ]]; then
+        echo "  A keypair named '$name' already exists."
+        return
+    fi
+
+    echo ""
+    echo "  Public exponent:"
+    echo "    1) 3"
+    echo "    2) 65537"
+    read -rp "  Select [1/2]: " exp_choice
+    local exponent
+    case "$exp_choice" in
+        1) exponent=3 ;;
+        2) exponent=65537 ;;
+        *)
+            echo "  Invalid selection."
+            return
+            ;;
+    esac
+
+    local key_size
+    while true; do
+        read -rp "  Key size in bits (1024–2048, multiples of 8): " key_size
+        if [[ "$key_size" =~ ^[0-9]+$ ]] \
+            && [[ $key_size -ge 1024 ]] \
+            && [[ $key_size -le 2048 ]] \
+            && [[ $(( key_size % 8 )) -eq 0 ]]; then
+            break
+        fi
+        echo "  Must be 1024–2048 and a multiple of 8."
+    done
+
+    local key_file="$PRIVATE_DIR/$name.key.pem"
+    local pub_file="$CERTS_DIR/$name.pub.pem"
+
+    echo ""
+    echo "  Generating RSA-$key_size (e=$exponent)..."
+
+    openssl genpkey \
+        -algorithm RSA \
+        -pkeyopt "rsa_keygen_bits:$key_size" \
+        -pkeyopt "rsa_keygen_pubexp:$exponent" \
+        -out "$key_file"
+
+    chmod 400 "$key_file"
+
+    openssl pkey -in "$key_file" -pubout -out "$pub_file"
+
+    log "CREATE_KEYPAIR name=$name bits=$key_size exponent=$exponent"
+    echo "  Keypair '$name' created."
+}
+
+do_list_keypairs() {
+    echo ""
+    echo "=== CA keypairs ==="
+    echo ""
+
+    shopt -s nullglob
+    local files=("$PRIVATE_DIR"/*.key.pem)
+    shopt -u nullglob
+
+    if [[ ${#files[@]} -eq 0 ]]; then
+        echo "  (none)"
+        return
+    fi
+
+    printf "  %-24s  %-19s  %s\n" "Name" "Created" "Bits"
+    printf "  %-24s  %-19s  %s\n" "────────────────────────" "───────────────────" "────"
+    for key_file in "${files[@]}"; do
+        local name created bits
+        name=$(basename "$key_file" .key.pem)
+        created=$(stat -c '%y' "$key_file" | cut -d'.' -f1)
+        bits=$(key_bits "$key_file")
+        printf "  %-24s  %-19s  %s\n" "$name" "$created" "$bits"
+    done
+}
+
+do_export_pubkey() {
+    echo ""
+    echo "=== Export CA public key ==="
+    echo ""
+
+    if ! usb_mounted; then
+        echo "  No USB device mounted."
+        return
+    fi
+
+    shopt -s nullglob
+    local files=("$PRIVATE_DIR"/*.key.pem)
+    shopt -u nullglob
+
+    if [[ ${#files[@]} -eq 0 ]]; then
+        echo "  No CA keypairs found."
+        return
+    fi
+
+    echo "  Available keypairs:"
+    for f in "${files[@]}"; do
+        echo "    - $(basename "$f" .key.pem)"
+    done
+    echo ""
+    read -rp "  Name: " name
+
+    local pub_file="$CERTS_DIR/$name.pub.pem"
+    if [[ ! -f "$pub_file" ]]; then
+        echo "  No keypair named '$name'."
+        return
+    fi
+
+    mkdir -p "$USB_CERTS_DIR"
+    cp "$pub_file" "$USB_CERTS_DIR/$name.pub.pem"
+
+    log "EXPORT_PUBKEY name=$name destination=$USB_CERTS_DIR/$name.pub.pem"
+    echo "  Exported to $USB_CERTS_DIR/$name.pub.pem"
+}
+
+do_list_issuer_keys() {
+    echo ""
+    echo "=== Issuer public keys on USB ==="
+    echo ""
+
+    if ! usb_mounted; then
+        echo "  No USB device mounted."
+        return
+    fi
+
+    if [[ ! -d "$USB_REQUESTS_DIR" ]]; then
+        echo "  No requests/ directory found on USB."
+        return
+    fi
+
+    shopt -s nullglob
+    local files=("$USB_REQUESTS_DIR"/*.pem)
+    shopt -u nullglob
+
+    if [[ ${#files[@]} -eq 0 ]]; then
+        echo "  (none)"
+        return
+    fi
+
+    printf "  %-24s  %-19s  %s\n" "Name" "Date" "Bits"
+    printf "  %-24s  %-19s  %s\n" "────────────────────────" "───────────────────" "────"
+    for pem_file in "${files[@]}"; do
+        local name date bits
+        name=$(basename "$pem_file" .pem)
+        date=$(stat -c '%y' "$pem_file" | cut -d'.' -f1)
+        bits=$(pubkey_bits "$pem_file")
+        printf "  %-24s  %-19s  %s\n" "$name" "$date" "$bits"
+    done
+}
+
+do_sign_issuer_key() {
+    echo ""
+    echo "=== Sign issuer public key ==="
+    echo ""
+    echo "  Not yet implemented."
+}
+
+do_shutdown() {
+    echo ""
+    echo "=== Unmount and shutdown ==="
+    echo ""
+
+    if usb_mounted; then
+        echo "  Unmounting USB..."
+        umount "$USB_MOUNT"
+        log "USB_UNMOUNT"
+    fi
+
+    log "SHUTDOWN"
+    echo "  Shutting down..."
+    shutdown -h now
+    sleep infinity  # wait for systemd to kill us
+}
+
+# ── Main loop ─────────────────────────────────────────────────────────────────
+
+while true; do
+    clear
+    echo "╔══════════════════════════════════════════╗"
+    echo "║          CA Key Management               ║"
+    echo "╚══════════════════════════════════════════╝"
+    echo ""
+
+    keypair_count=$(find "$PRIVATE_DIR" -name "*.key.pem" 2>/dev/null | wc -l)
+    if [[ $keypair_count -eq 0 ]]; then
+        echo "  [!] No CA keypair — create one before signing"
+    fi
+    if ! usb_mounted; then
+        echo "  [!] No USB device — insert USB storage device"
+    fi
+
+    echo ""
+    echo "  1) Create CA keypair"
+    echo "  2) List CA keypairs"
+    echo "  3) Export CA public key"
+    echo "  4) List issuer public keys on USB"
+    echo "  5) Sign issuer public key"
+    echo "  6) Unmount and shutdown"
+    echo ""
+    read -rp "  > " choice
+
+    case "$choice" in
+        1) do_create_keypair ;;
+        2) do_list_keypairs ;;
+        3) do_export_pubkey ;;
+        4) do_list_issuer_keys ;;
+        5) do_sign_issuer_key ;;
+        6) do_shutdown ;;
+        *) echo "  Invalid option." ;;
+    esac
+
+    if [[ "$choice" != "6" ]]; then
+        pause
+    fi
+done

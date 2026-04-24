@@ -1,0 +1,17 @@
+[Unit]
+Description=CA Key Management Menu
+After=multi-user.target mnt-cadata.mount
+Requires=mnt-cadata.mount
+
+[Service]
+ExecStart=/opt/ca/bin/ca-menu
+StandardInput=tty
+StandardOutput=tty
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

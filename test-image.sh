@@ -1,12 +1,10 @@
 #!/bin/bash
 set -euo pipefail
 
-ISO=build/live-image-amd64.hybrid.iso
-CA_DATA_IMG=build/cadata.img
+COMBINED_IMG=build/live-image-amd64.hybrid.img
 TEST_USB_IMG=build/test-usb.img
 
-[[ -f "$ISO" ]] || { echo "ISO not found: $ISO  (run ./docker-run.sh install first)"; exit 1; }
-[[ -f "$CA_DATA_IMG" ]] || { echo "CA data image not found: $CA_DATA_IMG  (run ./docker-run.sh install first)"; exit 1; }
+[[ -f "$COMBINED_IMG" ]] || { echo "Disk image not found: $COMBINED_IMG  (run ./docker-run.sh install first)"; exit 1; }
 [[ -f "$TEST_USB_IMG" ]] || { echo "Test USB image not found: $TEST_USB_IMG  (run ./docker-run.sh install first)"; exit 1; }
 
 if [[ -r /dev/kvm ]]; then
@@ -15,11 +13,15 @@ else
   kvm_flags=(-cpu Nehalem)
 fi
 
+# Boot via El Torito (cdrom). The same image is also attached as a virtio disk
+# so the live kernel sees the MBR partition table and can mount partition 2
+# (CA-DATA) via mnt-cadata.mount. This is two separate QEMU devices rather than
+# one, unlike real USB, but it correctly exercises CA data mounting.
 qemu-system-x86_64 \
   -m 2048 \
-  -cdrom "$ISO" \
+  -cdrom "$COMBINED_IMG" \
   -boot d \
-  -drive "file=$CA_DATA_IMG,format=raw,if=virtio,media=disk" \
+  -drive "file=$COMBINED_IMG,format=raw,if=virtio,media=disk,file.locking=off" \
   -drive "if=none,id=usbstick,file=$TEST_USB_IMG,format=raw" \
   -device qemu-xhci \
   -device usb-storage,drive=usbstick \

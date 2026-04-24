@@ -18,6 +18,7 @@ RUN apt-get update && apt-get install -y \
     curl \
     git \
     ca-certificates \
+    python3 \
     && apt-get clean
 
 # Optional: nicer debugging tools

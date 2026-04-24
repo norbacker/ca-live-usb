@@ -7,5 +7,5 @@ After=dev-%i.device mnt-cadata.mount
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/usr/local/sbin/usb-mount %i mount
-ExecStop=/usr/local/sbin/usb-mount %i umount
+ExecStart=/usr/local/bin/usb-mount %i mount
+ExecStop=/usr/local/bin/usb-mount %i umount

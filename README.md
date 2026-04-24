@@ -7,6 +7,7 @@ Based on Debian [live-build](https://salsa.debian.org/live-team/live-build).
 
 - `docker` if `lb` and requirements are not installed on the local host
 - `qemu-system-x86_64` and `ovmf` for testing
+- `gptfdisk` for flashing the USB (`prepare-usb.sh`)
 
 ## Build
 
@@ -51,7 +52,21 @@ mount and unmount events are audit logged to `/mnt/cadata/audit/usb-mount.log`.
 
 ### CA application
 
+At boot, a CA management menu is launched automatically as root on the main
+console. The menu allows the operator to create CA keypairs, export public
+keys to a USB device, inspect issuer keys presented on USB, and sign them.
+All activity is audit logged to `/mnt/cadata/audit/menu.log`.
+
 The CA tooling is installed under `/opt/ca/`.
+
+## Flash
+
+```
+./prepare-usb.sh build/live-image-amd64.hybrid.iso /dev/sdX
+```
+
+Writes the ISO and CA-DATA image to a USB drive and creates a writable partition
+for the CA-DATA in the remaining space.
 
 ## Test
 
