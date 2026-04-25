@@ -13,7 +13,8 @@ RUN apt-get update && apt-get install -y \
     grub-efi-amd64-bin \
     mtools \
     dosfstools \
-    f2fs-tools \
+    e2fsprogs \
+    cryptsetup \
     fdisk \
     curl \
     git \
@@ -28,7 +29,6 @@ RUN apt-get install -y \
 WORKDIR /workspace
 
 COPY build-image.sh /usr/local/bin/build-image.sh
-COPY build-usb-images.sh /usr/local/bin/build-usb-images.sh
 COPY config /build-config
 
-CMD ["bash", "-c", "build-image.sh && build-usb-images.sh"]
+CMD ["build-image.sh"]

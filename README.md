@@ -40,9 +40,11 @@ traffic.
 
 ### Writable CA-DATA partition
 
-The root filesystem is read-only. A separate partition labelled `CA-DATA` (f2fs)
-is mounted read-write at `/mnt/cadata` and holds the CA keypair, audit logs,
-and other persistent data.
+The root filesystem is read-only. A separate LUKS-encrypted partition labelled
+`CA-DATA` (ext4) is mounted read-write at `/mnt/cadata` and holds the CA
+keypair, audit logs, and other persistent data. The decryption key is baked into
+the live image at build time and is not retained in the workspace after the build
+completes.
 
 ### USB automount
 
