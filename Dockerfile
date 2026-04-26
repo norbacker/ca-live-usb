@@ -29,6 +29,7 @@ RUN apt-get install -y \
 WORKDIR /workspace
 
 COPY build-image.sh /usr/local/bin/build-image.sh
+COPY build-test-usb-image.sh /usr/local/bin/build-test-usb-image.sh
 COPY config /build-config
 
 CMD ["build-image.sh"]

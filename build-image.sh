@@ -5,17 +5,6 @@ set -euo pipefail
 rm -rf /workspace/config
 cp -r /build-config /workspace/config
 
-# ── Generate LUKS UUID ────────────────────────────────────────────────────────
-# A fresh UUID is generated every build and stored in the live image. The
-# ca-menu init function reads this UUID and passes it to luksFormat so that
-# subsequent boots can find the partition by UUID when opening it.
-LUKS_UUID=$(python3 -c "import uuid; print(uuid.uuid4())")
-
-echo "==> Generating LUKS UUID ..."
-
-install -D -m 444 /dev/stdin \
-  /workspace/config/includes.chroot/etc/cadata-uuid <<< "$LUKS_UUID"
-
 # ── Build live image ──────────────────────────────────────────────────────────
 cd /workspace
 
@@ -92,32 +81,5 @@ with open('$COMBINED_IMG', 'r+b') as f:
 EOF
 
 echo "==> Combined disk image ready: $(du -h "$COMBINED_IMG" | cut -f1)"
-
-# ── Test USB image ────────────────────────────────────────────────────────────
-# Small FAT32 image used by test-image.sh to exercise USB automount.
-# Preserved across builds so test files added to it are not wiped.
-TEST_USB_IMG=/workspace/test-usb.img
-TEST_USB_SIZE=16M
-
-if [[ -f "$TEST_USB_IMG" ]]; then
-  echo "Test USB image already exists, skipping creation."
-else
-  echo "==> Creating test USB image ($TEST_USB_SIZE) ..."
-  truncate -s "$TEST_USB_SIZE" "$TEST_USB_IMG"
-
-  # Write an MBR partition table with one FAT32 partition (type b) spanning the
-  # whole disk. A partition is required because the udev automount rule matches
-  # DEVTYPE=partition — a whole-disk format would be invisible to it.
-  echo ",,b;" | sfdisk "$TEST_USB_IMG"
-
-  # Attach only the first partition via --offset rather than --partscan.
-  # --partscan relies on partition device nodes (loopNp1) that are not reliably
-  # available inside Docker containers.
-  START=$(sfdisk --dump "$TEST_USB_IMG" | grep -oP 'start=\s*\K[0-9]+')
-  LOOP=$(losetup --find --show --offset $((START * 512)) "$TEST_USB_IMG")
-  mkfs.vfat -n TEST-USB "$LOOP"
-  losetup -d "$LOOP"
-  echo "==> Test USB image ready."
-fi
 
 echo "==> Build complete."

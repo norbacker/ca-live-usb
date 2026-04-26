@@ -16,8 +16,6 @@ USB_CERTS_DIR=$USB_MOUNT/certs
 USB_REQUESTS_DIR=$USB_MOUNT/requests
 AUDIT_LOG=menu.log
 AUDIT_DIR=/mnt/cadata/audit
-CADATA_UUID=$(cat /etc/cadata-uuid)
-
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 log() {
@@ -133,11 +131,23 @@ do_init_cadata() {
     [[ "$confirm" == "yes" ]] || { echo "  Aborted."; return; }
 
     echo ""
-    cryptsetup luksFormat --type luks2 --uuid "$CADATA_UUID" "$part"
+    local passphrase passphrase2
+    read -rsp "  Passphrase: " passphrase; echo
+    read -rsp "  Confirm passphrase: " passphrase2; echo
+    if [[ "$passphrase" != "$passphrase2" ]]; then
+        echo "  Passphrases do not match."
+        return
+    fi
+    if [[ -z "$passphrase" ]]; then
+        echo "  Passphrase cannot be empty."
+        return
+    fi
 
     echo ""
-    echo "  Passphrase set. Setting up filesystem..."
-    cryptsetup open "$part" cadata-init
+    echo "  Passphrase set. Formatting and setting up filesystem..."
+    printf '%s' "$passphrase" | cryptsetup luksFormat --type luks2 --batch-mode --pbkdf-memory 262144 --key-file - "$part"
+
+    printf '%s' "$passphrase" | cryptsetup open --key-file - "$part" cadata-init
 
     mkfs.ext4 -q /dev/mapper/cadata-init
 

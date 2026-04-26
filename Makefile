@@ -6,10 +6,10 @@ PLATFORM := linux/amd64
 LIVE_IMG     := build/live-image-amd64.hybrid.img
 TEST_USB_IMG := build/test-usb.img
 
-DOCKER_IMAGE_STAMP := .docker-image
-DOCKER_RUN_STAMP   := .docker-run
-DOCKER_SRCS        := Dockerfile build-image.sh $(shell find config -type f)
-BUILD_IMGS         := $(LIVE_IMG) $(TEST_USB_IMG)
+DOCKER_IMAGE_STAMP    := .docker-image
+DOCKER_RUN_STAMP      := .docker-run
+DOCKER_TEST_USB_STAMP := .docker-test-usb
+DOCKER_SRCS           := Dockerfile build-image.sh build-test-usb-image.sh $(shell find config -type f)
 
 RUN_FLAGS = \
   --platform $(PLATFORM) \
@@ -20,9 +20,9 @@ KVM_FLAGS := $(if $(wildcard /dev/kvm),-enable-kvm -cpu host,-cpu Nehalem)
 
 .PHONY: all install test run interactive prune clean help
 
-all: $(BUILD_IMGS)
+all: $(LIVE_IMG)
 
-install: $(BUILD_IMGS)
+install: $(LIVE_IMG)
 	@[ -n "$(DEV)" ] || { echo "Usage: make install DEV=/dev/sdX"; exit 1; }
 	@[ -b "$(DEV)" ] || { echo "Not a block device: $(DEV)"; exit 1; }
 	@echo "Target device: $(DEV)"
@@ -36,7 +36,7 @@ install: $(BUILD_IMGS)
 	sync
 	@echo "Done. USB is ready: $(DEV)"
 
-test: $(BUILD_IMGS)
+test: $(LIVE_IMG) $(TEST_USB_IMG)
 	qemu-system-x86_64 \
 	  -m 2048 \
 	  -cdrom "$(LIVE_IMG)" \
@@ -51,16 +51,26 @@ test: $(BUILD_IMGS)
 	  -display gtk \
 	  -bios /usr/share/ovmf/x64/OVMF.4m.fd
 
-$(BUILD_IMGS) &: $(DOCKER_RUN_STAMP)
+$(LIVE_IMG): $(DOCKER_RUN_STAMP)
 	mkdir -p build
 	cid=$$(docker create --platform $(PLATFORM) -v $(VOLUME):/workspace $(IMAGE)); \
 	docker cp $$cid:/workspace/live-image-amd64.hybrid.img build/; \
+	docker rm $$cid
+	touch $@
+
+$(TEST_USB_IMG): $(DOCKER_TEST_USB_STAMP)
+	mkdir -p build
+	cid=$$(docker create --platform $(PLATFORM) -v $(VOLUME):/workspace $(IMAGE)); \
 	docker cp $$cid:/workspace/test-usb.img build/; \
 	docker rm $$cid
-	touch $(BUILD_IMGS)
+	touch $@
 
 $(DOCKER_RUN_STAMP): $(DOCKER_IMAGE_STAMP)
 	docker run --rm $(RUN_FLAGS) $(IMAGE)
+	touch $@
+
+$(DOCKER_TEST_USB_STAMP): $(DOCKER_IMAGE_STAMP)
+	docker run --rm $(RUN_FLAGS) --entrypoint build-test-usb-image.sh $(IMAGE)
 	touch $@
 
 $(DOCKER_IMAGE_STAMP): $(DOCKER_SRCS)
@@ -78,13 +88,14 @@ prune:
 clean: prune
 	docker ps -a --filter "ancestor=$(IMAGE)" -q | xargs -r docker rm -f
 	docker image rm -f $(IMAGE)
-	rm -f $(BUILD_IMGS) $(DOCKER_IMAGE_STAMP) $(DOCKER_RUN_STAMP)
+	rm -f $(LIVE_IMG) $(TEST_USB_IMG) \
+	  $(DOCKER_IMAGE_STAMP) $(DOCKER_RUN_STAMP) $(DOCKER_TEST_USB_STAMP)
 
 help:
 	@echo "Usage: make [target]"
 	@echo ""
 	@echo "Targets:"
-	@echo "  all          Build and copy the images to build/ (default)"
+	@echo "  all          Build and copy the live image to build/ (default)"
 	@echo "  install      Write the image to a USB drive (requires DEV=/dev/sdX)"
 	@echo "  test         Boot the image in QEMU"
 	@echo "  run          Run the live-build container"
