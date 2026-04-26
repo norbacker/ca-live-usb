@@ -5,24 +5,23 @@ Based on Debian [live-build](https://salsa.debian.org/live-team/live-build).
 
 ## Requirements
 
+- `make`
 - `docker` if `lb` and requirements are not installed on the local host
 - `qemu-system-x86_64` and `ovmf` for testing
-- `gptfdisk` for flashing the USB (`prepare-usb.sh`)
 
 ## Build
 
-Either build direclty with:
+Either build directly with:
 ```
 ./build-image.sh
 ```
 
-Or through docker:
+Or through Docker:
 ```
-./docker-run.sh
+make
 ```
 This builds the Docker image, creates a persistent volume for the build workspace,
-and runs the build. The resulting ISO, CA-DATA image, and test USB image are
-written to `build/`.
+and runs the build. The resulting live image and test USB image are written to `build/`.
 
 ## Customization
 
@@ -69,18 +68,16 @@ The CA tooling is installed under `/opt/ca/`.
 ## Flash
 
 ```
-./prepare-usb.sh build/live-image-amd64.hybrid.iso /dev/sdX
+make install DEV=/dev/sdX
 ```
 
-Writes the ISO and CA-DATA image to a USB drive and creates a writable partition
-for the CA-DATA in the remaining space.
+Writes the image to a USB drive. Prompts for confirmation before writing.
 
 ## Test
 
 ```
-./test-image.sh
+make test
 ```
 
-Boots `build/live-image-amd64.hybrid.iso` in QEMU with UEFI and KVM. The
-CA-DATA image is attached as a virtio disk and the test USB image as a USB
-mass storage device to exercise automount.
+Boots `build/live-image-amd64.hybrid.img` in QEMU with UEFI and KVM (if available).
+The test USB image is attached as a USB mass storage device to exercise automount.
