@@ -1,0 +1,5 @@
+#!/bin/sh
+# Sudo access is disabled on this live image.
+Cmdline () { :; }
+Init ()    { :; }
+Config ()  { :; }

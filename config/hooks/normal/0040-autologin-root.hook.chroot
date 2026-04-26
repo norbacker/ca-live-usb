@@ -6,3 +6,6 @@ set -e
 # account and cannot be reliably overridden at build time.
 systemctl enable ca-menu.service
 systemctl mask getty@tty1.service
+
+# Lock root password so su root is not possible from the user shell.
+passwd -l root

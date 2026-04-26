@@ -15,6 +15,7 @@ USB_MOUNT=/media/usb
 USB_CERTS_DIR=$USB_MOUNT/certs
 USB_REQUESTS_DIR=$USB_MOUNT/requests
 AUDIT_LOG=menu.log
+AUDIT_DIR=/mnt/cadata/audit
 CADATA_UUID=$(cat /etc/cadata-uuid)
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -335,6 +336,43 @@ do_sign_issuer_key() {
     echo "  Not yet implemented."
 }
 
+do_read_audit_log() {
+    echo ""
+    echo "=== Read audit log ==="
+    echo ""
+
+    shopt -s nullglob
+    local files=("$AUDIT_DIR"/*)
+    shopt -u nullglob
+
+    if [[ ${#files[@]} -eq 0 ]]; then
+        echo "  (no logs found)"
+        return
+    fi
+
+    echo "  Available logs:"
+    for f in "${files[@]}"; do
+        echo "    - $(basename "$f")"
+    done
+    echo ""
+    read -rp "  Log name: " logname
+
+    local log_file="$AUDIT_DIR/$logname"
+    if [[ ! -f "$log_file" ]]; then
+        echo "  Log '$logname' not found."
+        return
+    fi
+
+    less "$log_file"
+}
+
+do_drop_to_shell() {
+    echo ""
+    echo "  Dropping to user shell. Type 'exit' to return to the menu."
+    echo ""
+    su - user
+}
+
 do_shutdown() {
     echo ""
     echo "=== Unmount and shutdown ==="
@@ -410,7 +448,9 @@ while true; do
     echo "  3) Export CA public key"
     echo "  4) List issuer public keys on USB"
     echo "  5) Sign issuer public key"
-    echo "  6) Unmount and shutdown"
+    echo "  6) Read audit log"
+    echo "  7) Drop to shell"
+    echo "  8) Unmount and shutdown"
     echo ""
     read -rp "  > " choice
 
@@ -420,11 +460,13 @@ while true; do
         3) do_export_pubkey ;;
         4) do_list_issuer_keys ;;
         5) do_sign_issuer_key ;;
-        6) do_shutdown ;;
+        6) do_read_audit_log ;;
+        7) do_drop_to_shell ;;
+        8) do_shutdown ;;
         *) echo "  Invalid option." ;;
     esac
 
-    if [[ "$choice" != "6" ]]; then
+    if [[ "$choice" != "8" ]]; then
         pause
     fi
 done
