@@ -1,7 +1,6 @@
 [Unit]
 Description=CA Key Management Menu
-After=multi-user.target mnt-cadata.mount
-Requires=mnt-cadata.mount
+After=multi-user.target
 
 [Service]
 ExecStart=/opt/ca/bin/ca-menu

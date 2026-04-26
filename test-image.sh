@@ -14,9 +14,11 @@ else
 fi
 
 # Boot via El Torito (cdrom). The same image is also attached as a virtio disk
-# so the live kernel sees the MBR partition table and can mount partition 2
-# (CA-DATA) via mnt-cadata.mount. This is two separate QEMU devices rather than
-# one, unlike real USB, but it correctly exercises CA data mounting.
+# so the live kernel sees the MBR partition table and can reach partition 2
+# (CA data). This is two separate QEMU devices rather than one, unlike real
+# USB, but it correctly exercises the CA data partition workflow.
+# On first boot partition 2 is empty; use "Initialize CA data partition" in
+# the CA menu to format it with LUKS2, then reboot to activate persistence.
 qemu-system-x86_64 \
   -m 2048 \
   -cdrom "$COMBINED_IMG" \

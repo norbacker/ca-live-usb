@@ -1,5 +1,0 @@
-#!/bin/sh
-set -e
-
-# Enable the CA data partition mount unit
-systemctl enable mnt-cadata.mount

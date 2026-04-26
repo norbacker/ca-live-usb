@@ -5,23 +5,16 @@ set -euo pipefail
 rm -rf /workspace/config
 cp -r /build-config /workspace/config
 
-# ── Generate LUKS keyfile and UUID ────────────────────────────────────────────
-# A fresh key is generated every build. It is baked into the ISO and used to
-# format the CA data partition, then shredded from the workspace. The key lives
-# only inside the read-only squashfs and in the encrypted partition it unlocks.
-CADATA_KEY=/workspace/cadata.key
+# ── Generate LUKS UUID ────────────────────────────────────────────────────────
+# A fresh UUID is generated every build and stored in the live image. The
+# ca-menu init function reads this UUID and passes it to luksFormat so that
+# subsequent boots can find the partition by UUID when opening it.
 LUKS_UUID=$(python3 -c "import uuid; print(uuid.uuid4())")
 
-echo "==> Generating LUKS keyfile ..."
-dd if=/dev/urandom bs=64 count=1 of="$CADATA_KEY" status=none
-chmod 600 "$CADATA_KEY"
+echo "==> Generating LUKS UUID ..."
 
-install -D -m 400 "$CADATA_KEY" \
-  /workspace/config/includes.chroot/etc/luks/cadata.key
-
-cat > /workspace/config/includes.chroot/etc/crypttab <<CRYPTTAB
-cadata  UUID=$LUKS_UUID  /etc/luks/cadata.key  luks,nofail,x-systemd.device-timeout=10
-CRYPTTAB
+install -D -m 444 /dev/stdin \
+  /workspace/config/includes.chroot/etc/cadata-uuid <<< "$LUKS_UUID"
 
 # ── Build live image ──────────────────────────────────────────────────────────
 cd /workspace
@@ -34,53 +27,26 @@ lb config \
   --binary-images iso-hybrid \
   --debian-installer none \
   --bootloaders "grub-efi" \
+  --bootappend-live "boot=live components quiet" \
   --mirror-bootstrap "http://ftp.se.debian.org/debian/" \
   --mirror-binary "http://ftp.se.debian.org/debian/"
 
 lb build
 
-# ── LUKS CA data image ────────────────────────────────────────────────────────
+# ── CA data partition image ───────────────────────────────────────────────────
+# Empty raw image written as partition 2 of the combined USB image.
+# The operator formats it with LUKS2 at first use via the CA menu.
 CA_DATA_IMG=/workspace/cadata.img
 CA_DATA_SIZE=512M
 
-echo "==> Creating LUKS CA data image ($CA_DATA_SIZE) ..."
+echo "==> Creating CA data partition image ($CA_DATA_SIZE) ..."
 rm -f "$CA_DATA_IMG"
 truncate -s "$CA_DATA_SIZE" "$CA_DATA_IMG"
 
-cryptsetup luksFormat \
-  --type luks2 \
-  --uuid "$LUKS_UUID" \
-  --batch-mode \
-  --key-file "$CADATA_KEY" \
-  "$CA_DATA_IMG"
-
-echo "==> Initialising directory structure ..."
-MNTDIR=$(mktemp -d)
-cryptsetup open --key-file "$CADATA_KEY" "$CA_DATA_IMG" cadata-build
-mkfs.ext4 -L CA-DATA /dev/mapper/cadata-build
-mount /dev/mapper/cadata-build "$MNTDIR"
-mkdir -p \
-  "$MNTDIR/ca/private" \
-  "$MNTDIR/ca/certs" \
-  "$MNTDIR/ca/newcerts" \
-  "$MNTDIR/ca/crl" \
-  "$MNTDIR/ca/csr" \
-  "$MNTDIR/audit"
-chmod 700 "$MNTDIR/ca/private"
-umount "$MNTDIR"
-cryptsetup close cadata-build
-rmdir "$MNTDIR"
-
-echo "==> LUKS CA data image ready."
-
-# ── Remove keyfile ────────────────────────────────────────────────────────────
-echo "==> Removing LUKS keyfile from workspace ..."
-shred -u "$CADATA_KEY"
-
 # ── Combined USB disk image ───────────────────────────────────────────────────
 # Append the CA data image to the ISO as a second MBR partition, producing a
-# single file that can be dd'd to USB or booted in QEMU (-cdrom for El Torito
-# boot, virtio disk for partition 2 / CA data access).
+# single file that can be dd'd to USB. The live system boots from partition 1
+# (El Torito / ISO 9660); partition 2 is formatted with LUKS2 at first use.
 ISO=/workspace/live-image-amd64.hybrid.iso
 COMBINED_IMG=/workspace/live-image-amd64.hybrid.img
 

@@ -1,9 +1,10 @@
 #!/bin/bash
 # prepare-usb.sh <device>
 #
-# Writes the combined USB disk image to a USB drive. The image already contains
-# both the live system (partition 1) and the CA data partition (partition 2),
-# so no post-flash partition manipulation is needed.
+# Writes the combined USB disk image to a USB drive.
+# Partition 1: live system (ISO 9660, read-only).
+# Partition 2: CA data — empty raw partition, formatted with LUKS2 at first
+#              use via the CA menu on the live system.
 #
 # Requires: dd
 

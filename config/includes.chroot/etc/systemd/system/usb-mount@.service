@@ -1,8 +1,7 @@
 [Unit]
 Description=Mount USB storage device /dev/%i
 BindsTo=dev-%i.device
-Requires=mnt-cadata.mount
-After=dev-%i.device mnt-cadata.mount
+After=dev-%i.device
 
 [Service]
 Type=oneshot

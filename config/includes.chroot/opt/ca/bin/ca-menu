@@ -15,6 +15,7 @@ USB_MOUNT=/media/usb
 USB_CERTS_DIR=$USB_MOUNT/certs
 USB_REQUESTS_DIR=$USB_MOUNT/requests
 AUDIT_LOG=menu.log
+CADATA_UUID=$(cat /etc/cadata-uuid)
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -31,6 +32,42 @@ usb_mounted() {
     mountpoint -q "$USB_MOUNT" 2>/dev/null
 }
 
+cadata_ready() {
+    mountpoint -q /mnt/cadata 2>/dev/null
+}
+
+# True if the CA data partition exists and has a LUKS header.
+cadata_has_luks() {
+    local part
+    part=$(find_cadata_partition 2>/dev/null) || return 1
+    cryptsetup isLuks "$part" 2>/dev/null
+}
+
+# Print the path to partition 2 of the live boot medium (the CA data slot).
+# Works for real USB boot and QEMU cdrom-boot testing.
+find_cadata_partition() {
+    local source disk part
+
+    # Primary: where live-boot mounted the medium
+    source=$(findmnt -n -o SOURCE /run/live/medium 2>/dev/null) || true
+
+    # If booted from cdrom (QEMU) or medium detection failed, find by ISO 9660
+    if [[ -z "$source" ]] || [[ "$source" == /dev/sr* ]]; then
+        source=$(blkid -t TYPE=iso9660 -o device 2>/dev/null \
+                 | grep -v '^/dev/sr' | head -1) || true
+    fi
+
+    [[ -z "$source" ]] && return 1
+
+    # Resolve to parent disk
+    disk=$(lsblk -no pkname "$source" 2>/dev/null) || true
+    [[ -z "$disk" ]] && disk=$(basename "$source")
+
+    part="/dev/${disk}2"
+    [[ -b "$part" ]] && { echo "$part"; return 0; }
+    return 1
+}
+
 # Return the RSA bit size for a private key file, or "?" on failure.
 key_bits() {
     openssl pkey -in "$1" -text -noout 2>/dev/null \
@@ -43,14 +80,90 @@ pubkey_bits() {
         | grep -oP '\d+(?= bit)' | head -1 || echo "?"
 }
 
-# ── Startup check ─────────────────────────────────────────────────────────────
+# ── Unlock ────────────────────────────────────────────────────────────────────
 
-if ! mountpoint -q /mnt/cadata 2>/dev/null; then
-    echo "FATAL: /mnt/cadata is not mounted." >&2
-    exit 1
-fi
+do_unlock_cadata() {
+    local part
+    part=$(find_cadata_partition)
 
-log "STARTUP"
+    echo "  Enter passphrase to unlock CA data partition."
+    echo ""
+
+    if cryptsetup open "$part" cadata; then
+        mount /dev/mapper/cadata /mnt/cadata
+        log "STARTUP"
+        return 0
+    else
+        cryptsetup close cadata 2>/dev/null || true
+        return 1
+    fi
+}
+
+# ── Initialization ────────────────────────────────────────────────────────────
+
+do_init_cadata() {
+    echo ""
+    echo "=== Initialize CA data partition ==="
+    echo ""
+
+    local part
+    if ! part=$(find_cadata_partition); then
+        echo "  ERROR: Cannot locate CA data partition."
+        echo "  Expected partition 2 of the live boot device."
+        return
+    fi
+
+    echo "  Found CA data partition: $part"
+    local existing_type
+    existing_type=$(blkid -o value -s TYPE "$part" 2>/dev/null) || true
+    if [[ -n "$existing_type" ]]; then
+        echo "  WARNING: Partition already contains a $existing_type filesystem."
+        echo "  Continuing will permanently destroy all existing CA data."
+        echo ""
+        read -rp "  Type 'yes' to destroy existing data and re-initialize: " confirm
+    else
+        echo ""
+        echo "  This will format $part with LUKS2 encryption."
+        echo "  Choose a strong passphrase — it will be required at every boot."
+        echo "  The passphrase is not stored anywhere; keep it safe."
+        echo ""
+        read -rp "  Type 'yes' to proceed: " confirm
+    fi
+    [[ "$confirm" == "yes" ]] || { echo "  Aborted."; return; }
+
+    echo ""
+    cryptsetup luksFormat --type luks2 --uuid "$CADATA_UUID" "$part"
+
+    echo ""
+    echo "  Passphrase set. Setting up filesystem..."
+    cryptsetup open "$part" cadata-init
+
+    mkfs.ext4 -q /dev/mapper/cadata-init
+
+    local mntdir
+    mntdir=$(mktemp -d)
+    mount /dev/mapper/cadata-init "$mntdir"
+
+    mkdir -p \
+        "$mntdir/ca/private" \
+        "$mntdir/ca/certs" \
+        "$mntdir/ca/newcerts" \
+        "$mntdir/ca/crl" \
+        "$mntdir/ca/csr" \
+        "$mntdir/audit"
+    chmod 700 "$mntdir/ca/private"
+
+    umount "$mntdir"
+    rmdir "$mntdir"
+    cryptsetup close cadata-init
+
+    echo ""
+    echo "  CA data partition initialized successfully."
+    echo "  You will be prompted for the passphrase on every boot."
+    echo ""
+    read -rp "  Reboot now? [Y/n]: " reboot_confirm
+    [[ "$reboot_confirm" =~ ^[Nn]$ ]] || reboot
+}
 
 # ── Operations ────────────────────────────────────────────────────────────────
 
@@ -233,7 +346,12 @@ do_shutdown() {
         log "USB_UNMOUNT"
     fi
 
-    log "SHUTDOWN"
+    if cadata_ready; then
+        log "SHUTDOWN"
+        umount /mnt/cadata
+    fi
+    cryptsetup close cadata 2>/dev/null || true
+
     echo "  Shutting down..."
     shutdown -h now
     sleep infinity  # wait for systemd to kill us
@@ -247,6 +365,36 @@ while true; do
     echo "║          CA Key Management               ║"
     echo "╚══════════════════════════════════════════╝"
     echo ""
+
+    if ! cadata_ready; then
+        if cadata_has_luks; then
+            # Initialized but locked — prompt for passphrase
+            if ! do_unlock_cadata; then
+                echo ""
+                echo "  Incorrect passphrase."
+                echo ""
+                echo "  1) Try again"
+                echo "  2) Shutdown"
+                echo ""
+                read -rp "  > " choice
+                [[ "$choice" == "2" ]] && do_shutdown
+            fi
+        else
+            # Not yet initialized
+            echo "  CA data partition is not initialized."
+            echo ""
+            echo "  1) Initialize CA data partition"
+            echo "  2) Shutdown"
+            echo ""
+            read -rp "  > " choice
+            case "$choice" in
+                1) do_init_cadata; pause ;;
+                2) do_shutdown ;;
+                *) echo "  Invalid option."; pause ;;
+            esac
+        fi
+        continue
+    fi
 
     keypair_count=$(find "$PRIVATE_DIR" -name "*.key.pem" 2>/dev/null | wc -l)
     if [[ $keypair_count -eq 0 ]]; then

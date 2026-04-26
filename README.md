@@ -40,11 +40,16 @@ traffic.
 
 ### Writable CA-DATA partition
 
-The root filesystem is read-only. A separate LUKS-encrypted partition labelled
-`CA-DATA` (ext4) is mounted read-write at `/mnt/cadata` and holds the CA
-keypair, audit logs, and other persistent data. The decryption key is baked into
-the live image at build time and is not retained in the workspace after the build
-completes.
+The root filesystem is read-only. A separate LUKS2-encrypted partition is used
+as a live-boot persistence layer, bind-mounted at `/mnt/cadata`, and holds the
+CA keypair, audit logs, and other persistent data.
+
+The partition (partition 2 of the USB image) is written as empty raw space at
+build time. On first boot the CA menu offers an **Initialize CA data partition**
+option that formats it with LUKS2 and prompts the operator to choose a
+passphrase. The passphrase is not stored anywhere — it must be entered at every
+boot. live-boot detects the LUKS partition automatically and prompts for the
+passphrase during early boot before the CA menu starts.
 
 ### USB automount
 
