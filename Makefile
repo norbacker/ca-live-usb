@@ -16,7 +16,9 @@ RUN_FLAGS = \
   --privileged \
   -v $(VOLUME):/workspace
 
-KVM_FLAGS := $(if $(wildcard /dev/kvm),-enable-kvm -cpu host,-cpu Nehalem)
+KVM_FLAGS   := $(if $(wildcard /dev/kvm),-enable-kvm -cpu host,-cpu Nehalem)
+DISPLAY_ARG := $(if $(filter Darwin,$(shell uname -s)),cocoa,gtk)
+
 
 .PHONY: all install test run interactive prune clean help
 
@@ -48,8 +50,7 @@ test: $(LIVE_IMG) $(TEST_USB_IMG)
 	  $(KVM_FLAGS) \
 	  -smp 2 \
 	  -vga virtio \
-	  -display gtk \
-	  -bios /usr/share/ovmf/x64/OVMF.4m.fd
+	  -display $(DISPLAY_ARG)
 
 $(LIVE_IMG): $(DOCKER_RUN_STAMP)
 	mkdir -p build

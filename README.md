@@ -7,7 +7,42 @@ Based on Debian [live-build](https://salsa.debian.org/live-team/live-build).
 
 - `make`
 - `docker` if `lb` and requirements are not installed on the local host
-- `qemu-system-x86_64` and `ovmf` for testing
+- `qemu-system-x86_64` for testing
+
+### macOS (Apple Silicon)
+
+The image targets `linux/amd64`. On Apple Silicon, use
+[Colima](https://github.com/abiosoft/colima) with Virtualization.framework.
+A named profile keeps it separate from any existing Colima VM:
+
+```
+colima start --profile x86 --vm-type vz
+colima stop --profile x86
+```
+
+Edit `~/.colima/x86/colima.yaml` and add a provision script that installs
+QEMU user-mode emulation for x86_64:
+
+```yaml
+provision:
+  - mode: system
+    script: |
+      apt-get install -y -qq qemu-user-static
+      update-binfmts --enable qemu-x86_64
+```
+
+Then start the VM and switch Docker context:
+
+```
+colima start --profile x86
+docker context use colima-x86
+```
+
+Switch back to your default Docker context when done:
+
+```
+docker context use colima
+```
 
 ## Build
 
@@ -79,5 +114,5 @@ Writes the image to a USB drive. Prompts for confirmation before writing.
 make test
 ```
 
-Boots `build/live-image-amd64.hybrid.img` in QEMU with UEFI and KVM (if available).
+Boots `build/live-image-amd64.hybrid.img` in QEMU with KVM (if available).
 The test USB image is attached as a USB mass storage device to exercise automount.
