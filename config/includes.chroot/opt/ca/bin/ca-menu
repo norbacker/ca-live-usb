@@ -183,11 +183,19 @@ do_create_keypair() {
     echo "=== Create CA keypair ==="
     echo ""
 
-    read -rp "  CA name (letters, digits, hyphens, underscores): " name
-    if [[ -z "$name" || ! "$name" =~ ^[A-Za-z0-9_-]+$ ]]; then
-        echo "  Invalid name."
+    read -rp "  RID (10 hexadecimal digits): " rid
+    if [[ -z "$rid" || ! "$rid" =~ ^[0-9a-fA-F]{10}$ ]]; then
+        echo "  Invalid RID. Must be exactly 10 hexadecimal digits."
         return
     fi
+
+    read -rp "  Index (digits only): " index
+    if [[ -z "$index" || ! "$index" =~ ^[0-9]+$ ]]; then
+        echo "  Invalid index."
+        return
+    fi
+
+    local name="${rid}-${index}"
     if [[ -f "$PRIVATE_DIR/$name.key.pem" ]]; then
         echo "  A keypair named '$name' already exists."
         return
@@ -236,7 +244,7 @@ do_create_keypair() {
 
     openssl pkey -in "$key_file" -pubout -out "$pub_file"
 
-    log "CREATE_KEYPAIR name=$name bits=$key_size exponent=$exponent"
+    log "CREATE_KEYPAIR name=$name rid=$rid index=$index bits=$key_size exponent=$exponent"
     echo "  Keypair '$name' created."
 }
 
@@ -254,14 +262,16 @@ do_list_keypairs() {
         return
     fi
 
-    printf "  %-24s  %-19s  %s\n" "Name" "Created" "Bits"
-    printf "  %-24s  %-19s  %s\n" "────────────────────────" "───────────────────" "────"
+    printf "  %-10s  %-5s  %-19s  %s\n" "RID" "Index" "Created" "Bits"
+    printf "  %-10s  %-5s  %-19s  %s\n" "──────────" "─────" "───────────────────" "────"
     for key_file in "${files[@]}"; do
-        local name created bits
-        name=$(basename "$key_file" .key.pem)
+        local stem rid index created bits
+        stem=$(basename "$key_file" .key.pem)
+        rid="${stem%-*}"
+        index="${stem##*-}"
         created=$(stat -c '%y' "$key_file" | cut -d'.' -f1)
         bits=$(key_bits "$key_file")
-        printf "  %-24s  %-19s  %s\n" "$name" "$created" "$bits"
+        printf "  %-10s  %-5s  %-19s  %s\n" "$rid" "$index" "$created" "$bits"
     done
 }
 
@@ -285,23 +295,65 @@ do_export_pubkey() {
     fi
 
     echo "  Available keypairs:"
+    printf "    %-10s  %s\n" "RID" "Index"
     for f in "${files[@]}"; do
-        echo "    - $(basename "$f" .key.pem)"
+        local stem frid fidx
+        stem=$(basename "$f" .key.pem)
+        frid="${stem%-*}"
+        fidx="${stem##*-}"
+        printf "    %-10s  %s\n" "$frid" "$fidx"
     done
     echo ""
-    read -rp "  Name: " name
+    read -rp "  RID (10 hexadecimal digits): " rid
+    if [[ -z "$rid" || ! "$rid" =~ ^[0-9a-fA-F]{10}$ ]]; then
+        echo "  Invalid RID."
+        return
+    fi
+    read -rp "  Index (digits only): " index
+    if [[ -z "$index" || ! "$index" =~ ^[0-9]+$ ]]; then
+        echo "  Invalid index."
+        return
+    fi
 
+    local name="${rid}-${index}"
     local pub_file="$CERTS_DIR/$name.pub.pem"
     if [[ ! -f "$pub_file" ]]; then
         echo "  No keypair named '$name'."
         return
     fi
 
+    # Extract modulus (uppercase hex) and exponent from public key
+    local modulus exponent_dec exponent_hex
+    modulus=$(openssl rsa -pubin -in "$pub_file" -modulus -noout | cut -d= -f2)
+    exponent_dec=$(openssl pkey -pubin -in "$pub_file" -text -noout \
+        | grep 'Exponent:' | grep -oP '\d+' | head -1)
+    exponent_hex=$(printf '%X' "$exponent_dec")
+    (( ${#exponent_hex} % 2 != 0 )) && exponent_hex="0${exponent_hex}"
+
+    # Pad index to even length for hex stream used in checksum
+    local index_hex="$index"
+    (( ${#index_hex} % 2 != 0 )) && index_hex="0${index_hex}"
+
+    local checksum
+    checksum=$(printf '%s' "${rid^^}${index_hex}${modulus}${exponent_hex}" \
+        | xxd -r -p | sha1sum | awk '{print toupper($1)}')
+
     mkdir -p "$USB_CERTS_DIR"
     cp "$pub_file" "$USB_CERTS_DIR/$name.pub.pem"
 
-    log "EXPORT_PUBKEY name=$name destination=$USB_CERTS_DIR/$name.pub.pem"
+    cat > "$USB_CERTS_DIR/$name.pub.json" <<EOF
+{
+    "rid": "${rid^^}",
+    "index": "$index",
+    "modulus": "$modulus",
+    "exponent": "$exponent_hex",
+    "checksum": "$checksum"
+}
+EOF
+
+    log "EXPORT_PUBKEY name=$name destination=$USB_CERTS_DIR"
     echo "  Exported to $USB_CERTS_DIR/$name.pub.pem"
+    echo "  Exported to $USB_CERTS_DIR/$name.pub.json"
 }
 
 do_list_issuer_keys() {
@@ -316,6 +368,9 @@ do_list_issuer_keys() {
 
     if [[ ! -d "$USB_REQUESTS_DIR" ]]; then
         echo "  No requests/ directory found on USB."
+        echo ""
+        echo "  Create a 'requests/' directory on the USB device and place"
+        echo "  issuer public key PEM files inside it (any name ending in .pem)."
         return
     fi
 
@@ -324,7 +379,10 @@ do_list_issuer_keys() {
     shopt -u nullglob
 
     if [[ ${#files[@]} -eq 0 ]]; then
-        echo "  (none)"
+        echo "  No issuer public key files found."
+        echo ""
+        echo "  Place issuer public key PEM files in $USB_REQUESTS_DIR"
+        echo "  (any name ending in .pem)."
         return
     fi
 
@@ -343,7 +401,183 @@ do_sign_issuer_key() {
     echo ""
     echo "=== Sign issuer public key ==="
     echo ""
-    echo "  Not yet implemented."
+
+    if ! usb_mounted; then
+        echo "  No USB device mounted."
+        return
+    fi
+
+    # ── Select issuer public key ───────────────────────────────────────────────
+
+    shopt -s nullglob
+    local req_files=("$USB_REQUESTS_DIR"/*.pem)
+    shopt -u nullglob
+
+    if [[ ${#req_files[@]} -eq 0 ]]; then
+        echo "  No issuer public key files found in $USB_REQUESTS_DIR."
+        return
+    fi
+
+    echo "  Available issuer public keys:"
+    for f in "${req_files[@]}"; do
+        echo "    - $(basename "$f")"
+    done
+    echo ""
+    read -rp "  Issuer PEM filename: " issuer_name
+    local issuer_file="$USB_REQUESTS_DIR/$issuer_name"
+    if [[ ! -f "$issuer_file" ]]; then
+        echo "  File not found: $issuer_name"
+        return
+    fi
+
+    local issuer_exp_dec
+    issuer_exp_dec=$(openssl pkey -pubin -in "$issuer_file" -text -noout 2>/dev/null \
+        | grep 'Exponent:' | grep -oP '\d+' | head -1) || true
+    if [[ -z "$issuer_exp_dec" ]]; then
+        echo "  Could not read issuer public key from '$issuer_name'."
+        return
+    fi
+    if [[ "$issuer_exp_dec" != "3" && "$issuer_exp_dec" != "65537" ]]; then
+        echo "  Unsupported exponent $issuer_exp_dec. Must be 3 or 65537."
+        return
+    fi
+
+    # ── Select CA keypair ──────────────────────────────────────────────────────
+
+    shopt -s nullglob
+    local ca_files=("$PRIVATE_DIR"/*.key.pem)
+    shopt -u nullglob
+
+    if [[ ${#ca_files[@]} -eq 0 ]]; then
+        echo "  No CA keypairs found."
+        return
+    fi
+
+    echo "  Available CA keypairs:"
+    printf "    %-10s  %s\n" "RID" "Index"
+    for f in "${ca_files[@]}"; do
+        local stem frid fidx
+        stem=$(basename "$f" .key.pem)
+        frid="${stem%-*}"
+        fidx="${stem##*-}"
+        printf "    %-10s  %s\n" "$frid" "$fidx"
+    done
+    echo ""
+    read -rp "  RID (10 hexadecimal digits): " ca_rid
+    if [[ -z "$ca_rid" || ! "$ca_rid" =~ ^[0-9a-fA-F]{10}$ ]]; then
+        echo "  Invalid RID."
+        return
+    fi
+    read -rp "  Index (digits only): " ca_index
+    if [[ -z "$ca_index" || ! "$ca_index" =~ ^[0-9]+$ ]]; then
+        echo "  Invalid index."
+        return
+    fi
+    local ca_name="${ca_rid}-${ca_index}"
+    local ca_key_file="$PRIVATE_DIR/$ca_name.key.pem"
+    if [[ ! -f "$ca_key_file" ]]; then
+        echo "  No CA keypair named '$ca_name'."
+        return
+    fi
+
+    # ── BIN ───────────────────────────────────────────────────────────────────
+
+    read -rp "  BIN (3-8 digits): " bin
+    if [[ -z "$bin" || ! "$bin" =~ ^[0-9]{3,8}$ ]]; then
+        echo "  Invalid BIN. Must be 3-8 digits."
+        return
+    fi
+    local issuer_pan
+    issuer_pan=$(printf '%-8s' "$bin" | tr ' ' 'F')
+
+    # ── Sequence number ────────────────────────────────────────────────────────
+
+    read -rp "  Sequence number: " seq_num_raw
+    if [[ -z "$seq_num_raw" || ! "$seq_num_raw" =~ ^[0-9]+$ ]]; then
+        echo "  Invalid sequence number."
+        return
+    fi
+    local seq_num
+    seq_num=$(printf '%06d' "$seq_num_raw")
+
+    local csr_dir="/mnt/cadata/ca/csr"
+    local cert_filename="${bin}-${seq_num}.cert.json"
+    if [[ -f "$csr_dir/$cert_filename" ]]; then
+        echo "  Sequence number $seq_num is already taken for BIN $bin."
+        return
+    fi
+
+    # ── Certificate expiry ────────────────────────────────────────────────────
+
+    read -rp "  Certificate expiry (MMYY, e.g. 0835): " cert_exp
+    if [[ -z "$cert_exp" || ! "$cert_exp" =~ ^[0-9]{4}$ ]]; then
+        echo "  Invalid expiry. Must be 4 digits in MMYY format."
+        return
+    fi
+
+    # ── Build cert ────────────────────────────────────────────────────────────
+
+    echo ""
+    echo "  Signing..."
+
+    local ca_modulus issuer_modulus
+    ca_modulus=$(openssl rsa -in "$ca_key_file" -modulus -noout | cut -d= -f2)
+    issuer_modulus=$(openssl rsa -pubin -in "$issuer_file" -modulus -noout | cut -d= -f2)
+
+    local ca_len issuer_pk_bytes issuer_pk_len
+    ca_len=$(( ${#ca_modulus} / 2 ))
+    issuer_pk_bytes=$(( ${#issuer_modulus} / 2 ))
+    issuer_pk_len=$(printf '%02X' "$issuer_pk_bytes")
+
+    local issuer_pk_ext issuer_pk_exp_len
+    if [[ "$issuer_exp_dec" == "3" ]]; then
+        issuer_pk_ext="03"
+        issuer_pk_exp_len="01"
+    else
+        issuer_pk_ext="010001"
+        issuer_pk_exp_len="03"
+    fi
+
+    local left_hex_len issuer_pk_left issuer_pk_right
+    left_hex_len=$(( (ca_len - 36) * 2 ))
+    issuer_pk_left="${issuer_modulus:0:$left_hex_len}"
+    issuer_pk_right="${issuer_modulus:$left_hex_len}"
+
+    if [[ ${#issuer_pk_left} -lt $left_hex_len ]]; then
+        local pad
+        pad=$(printf '%0*s' "$(( left_hex_len - ${#issuer_pk_left} ))" '' | tr ' ' 'B')
+        issuer_pk_left="${issuer_pk_left}${pad}"
+    fi
+
+    local cert_format="02"   # Issuer Public Key certificate
+    local hash_alg="01"      # SHA-1
+    local pk_alg="01"        # RSA
+    local data_header="6A"
+    local data_trailer="BC"
+
+    local hash_data_hex hash
+    hash_data_hex="${cert_format}${issuer_pan}${cert_exp}${seq_num}${hash_alg}${pk_alg}${issuer_pk_len}${issuer_pk_exp_len}${issuer_pk_left}${issuer_pk_right}${issuer_pk_ext}"
+    hash=$(printf '%s' "$hash_data_hex" | xxd -r -p | sha1sum | awk '{print toupper($1)}')
+
+    local sign_data_hex cert
+    sign_data_hex="${data_header}${cert_format}${issuer_pan}${cert_exp}${seq_num}${hash_alg}${pk_alg}${issuer_pk_len}${issuer_pk_exp_len}${issuer_pk_left}${hash}${data_trailer}"
+    cert=$(printf '%s' "$sign_data_hex" | xxd -r -p \
+        | openssl pkeyutl -sign -inkey "$ca_key_file" -pkeyopt rsa_padding_mode:none \
+        | xxd -p | tr -d '\n' | tr 'a-f' 'A-F')
+
+    local cert_json
+    cert_json="{
+  \"issuerCertificate\": \"$cert\",
+  \"signingCa\": \"$ca_name\"
+}"
+
+    mkdir -p "$csr_dir" "$USB_CERTS_DIR"
+    printf '%s\n' "$cert_json" > "$csr_dir/$cert_filename"
+    cp "$csr_dir/$cert_filename" "$USB_CERTS_DIR/$cert_filename"
+
+    log "SIGN_ISSUER_KEY issuer=$(basename "$issuer_file") ca=$ca_name bin=$bin seq=$seq_num"
+    echo "  Certificate: $cert_filename"
+    echo "  Saved to USB: $USB_CERTS_DIR/$cert_filename"
 }
 
 do_read_audit_log() {
