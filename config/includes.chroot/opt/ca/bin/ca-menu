@@ -370,30 +370,33 @@ do_list_issuer_keys() {
         echo "  No requests/ directory found on USB."
         echo ""
         echo "  Create a 'requests/' directory on the USB device and place"
-        echo "  issuer public key PEM files inside it (any name ending in .pem)."
+        echo "  issuer request files inside it (any name ending in .csr.json)."
         return
     fi
 
     shopt -s nullglob
-    local files=("$USB_REQUESTS_DIR"/*.pem)
+    local files=("$USB_REQUESTS_DIR"/*.csr.json)
     shopt -u nullglob
 
     if [[ ${#files[@]} -eq 0 ]]; then
-        echo "  No issuer public key files found."
+        echo "  No issuer request files found."
         echo ""
-        echo "  Place issuer public key PEM files in $USB_REQUESTS_DIR"
-        echo "  (any name ending in .pem)."
+        echo "  Place issuer public key request files in $USB_REQUESTS_DIR"
+        echo "  (any name ending in .csr.json)."
         return
     fi
 
-    printf "  %-24s  %-19s  %s\n" "Name" "Date" "Bits"
-    printf "  %-24s  %-19s  %s\n" "────────────────────────" "───────────────────" "────"
-    for pem_file in "${files[@]}"; do
-        local name date bits
-        name=$(basename "$pem_file" .pem)
-        date=$(stat -c '%y' "$pem_file" | cut -d'.' -f1)
-        bits=$(pubkey_bits "$pem_file")
-        printf "  %-24s  %-19s  %s\n" "$name" "$date" "$bits"
+    printf "  %-24s  %-8s  %-6s  %s\n" "File" "PAN" "Seq#" "Bits"
+    printf "  %-24s  %-8s  %-6s  %s\n" "────────────────────────" "────────" "──────" "────"
+    for f in "${files[@]}"; do
+        local name pan seq bits
+        name=$(basename "$f" .csr.json)
+        pan=$(jq -r '.applicationPan // "?"' "$f" 2>/dev/null)
+        seq=$(jq -r '.certificateSequenceNumber // "?"' "$f" 2>/dev/null)
+        bits=$(jq -r '.publicKey' "$f" 2>/dev/null \
+            | openssl pkey -pubin -text -noout 2>/dev/null \
+            | grep -oP '\d+(?= bit)' | head -1 || echo "?")
+        printf "  %-24s  %-8s  %-6s  %s\n" "$name" "$pan" "$seq" "$bits"
     done
 }
 
@@ -410,28 +413,55 @@ do_sign_issuer_key() {
     # ── Select issuer public key ───────────────────────────────────────────────
 
     shopt -s nullglob
-    local req_files=("$USB_REQUESTS_DIR"/*.pem)
+    local req_files=("$USB_REQUESTS_DIR"/*.csr.json)
     shopt -u nullglob
 
     if [[ ${#req_files[@]} -eq 0 ]]; then
-        echo "  No issuer public key files found in $USB_REQUESTS_DIR."
+        echo "  No issuer request files found in $USB_REQUESTS_DIR."
         return
     fi
 
-    echo "  Available issuer public keys:"
+    echo "  Available issuer requests:"
+    printf "    %-24s  %-8s  %s\n" "File" "PAN" "Seq#"
     for f in "${req_files[@]}"; do
-        echo "    - $(basename "$f")"
+        local fpan fseq
+        fpan=$(jq -r '.applicationPan // "?"' "$f" 2>/dev/null)
+        fseq=$(jq -r '.certificateSequenceNumber // "?"' "$f" 2>/dev/null)
+        printf "    %-24s  %-8s  %s\n" "$(basename "$f" .csr.json)" "$fpan" "$fseq"
     done
     echo ""
-    read -rp "  Issuer PEM filename: " issuer_name
+    read -rp "  Issuer request filename: " issuer_name
     local issuer_file="$USB_REQUESTS_DIR/$issuer_name"
     if [[ ! -f "$issuer_file" ]]; then
         echo "  File not found: $issuer_name"
         return
     fi
 
+    local issuer_pan_raw issuer_seq_raw issuer_pubkey
+    issuer_pan_raw=$(jq -r '.applicationPan' "$issuer_file" 2>/dev/null)
+    issuer_seq_raw=$(jq -r '.certificateSequenceNumber' "$issuer_file" 2>/dev/null)
+    issuer_pubkey=$(jq -r '.publicKey' "$issuer_file" 2>/dev/null)
+
+    if [[ -z "$issuer_pan_raw" || "$issuer_pan_raw" == "null" \
+       || -z "$issuer_seq_raw" || "$issuer_seq_raw" == "null" \
+       || -z "$issuer_pubkey"  || "$issuer_pubkey"  == "null" ]]; then
+        echo "  Malformed request file: missing required fields."
+        return
+    fi
+    if [[ ! "$issuer_pan_raw" =~ ^[0-9]{3,8}$ ]]; then
+        echo "  Invalid applicationPan '$issuer_pan_raw'. Must be 3-8 digits."
+        return
+    fi
+    if [[ ! "$issuer_seq_raw" =~ ^[0-9]+$ ]]; then
+        echo "  Invalid certificateSequenceNumber '$issuer_seq_raw'."
+        return
+    fi
+
+    echo "  PAN: $issuer_pan_raw  Seq#: $issuer_seq_raw"
+
     local issuer_exp_dec
-    issuer_exp_dec=$(openssl pkey -pubin -in "$issuer_file" -text -noout 2>/dev/null \
+    issuer_exp_dec=$(printf '%s' "$issuer_pubkey" \
+        | openssl pkey -pubin -text -noout 2>/dev/null \
         | grep 'Exponent:' | grep -oP '\d+' | head -1) || true
     if [[ -z "$issuer_exp_dec" ]]; then
         echo "  Could not read issuer public key from '$issuer_name'."
@@ -480,25 +510,12 @@ do_sign_issuer_key() {
         return
     fi
 
-    # ── BIN ───────────────────────────────────────────────────────────────────
+    # ── BIN and sequence number (from request file) ───────────────────────────
 
-    read -rp "  BIN (3-8 digits): " bin
-    if [[ -z "$bin" || ! "$bin" =~ ^[0-9]{3,8}$ ]]; then
-        echo "  Invalid BIN. Must be 3-8 digits."
-        return
-    fi
-    local issuer_pan
+    local bin issuer_pan seq_num
+    bin="$issuer_pan_raw"
     issuer_pan=$(printf '%-8s' "$bin" | tr ' ' 'F')
-
-    # ── Sequence number ────────────────────────────────────────────────────────
-
-    read -rp "  Sequence number: " seq_num_raw
-    if [[ -z "$seq_num_raw" || ! "$seq_num_raw" =~ ^[0-9]+$ ]]; then
-        echo "  Invalid sequence number."
-        return
-    fi
-    local seq_num
-    seq_num=$(printf '%06d' "$seq_num_raw")
+    seq_num=$(printf '%06d' "$issuer_seq_raw")
 
     local csr_dir="/mnt/cadata/ca/csr"
     local cert_filename="${bin}-${seq_num}.cert.json"
@@ -522,7 +539,7 @@ do_sign_issuer_key() {
 
     local ca_modulus issuer_modulus
     ca_modulus=$(openssl rsa -in "$ca_key_file" -modulus -noout | cut -d= -f2)
-    issuer_modulus=$(openssl rsa -pubin -in "$issuer_file" -modulus -noout | cut -d= -f2)
+    issuer_modulus=$(printf '%s' "$issuer_pubkey" | openssl rsa -pubin -modulus -noout | cut -d= -f2)
 
     local ca_len issuer_pk_bytes issuer_pk_len
     ca_len=$(( ${#ca_modulus} / 2 ))

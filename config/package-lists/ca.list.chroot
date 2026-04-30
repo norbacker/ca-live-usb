@@ -1,3 +1,5 @@
 cryptsetup
+jq
 nftables
 openssl
+xxd
