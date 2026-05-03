@@ -1,4 +1,5 @@
 build/
+mnt/
 .docker-image
 .docker-run
 .docker-test-usb

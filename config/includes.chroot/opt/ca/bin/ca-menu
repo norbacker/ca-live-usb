@@ -296,6 +296,7 @@ do_export_pubkey() {
 
     echo "  Available keypairs:"
     printf "    %-10s  %s\n" "RID" "Index"
+    printf "    %-10s  %s\n" "──────────" "─────"
     for f in "${files[@]}"; do
         local stem frid fidx
         stem=$(basename "$f" .key.pem)
@@ -423,6 +424,7 @@ do_sign_issuer_key() {
 
     echo "  Available issuer requests:"
     printf "    %-24s  %-8s  %s\n" "File" "PAN" "Seq#"
+    printf "    %-24s  %-8s  %s\n" "────────────────────────" "────────" "──────"
     for f in "${req_files[@]}"; do
         local fpan fseq
         fpan=$(jq -r '.applicationPan // "?"' "$f" 2>/dev/null)
@@ -430,8 +432,8 @@ do_sign_issuer_key() {
         printf "    %-24s  %-8s  %s\n" "$(basename "$f" .csr.json)" "$fpan" "$fseq"
     done
     echo ""
-    read -rp "  Issuer request filename: " issuer_name
-    local issuer_file="$USB_REQUESTS_DIR/$issuer_name"
+    read -rp "  Issuer request name: " issuer_name
+    local issuer_file="$USB_REQUESTS_DIR/${issuer_name%.csr.json}.csr.json"
     if [[ ! -f "$issuer_file" ]]; then
         echo "  File not found: $issuer_name"
         return
@@ -485,6 +487,7 @@ do_sign_issuer_key() {
 
     echo "  Available CA keypairs:"
     printf "    %-10s  %s\n" "RID" "Index"
+    printf "    %-10s  %s\n" "──────────" "─────"
     for f in "${ca_files[@]}"; do
         local stem frid fidx
         stem=$(basename "$f" .key.pem)
@@ -579,7 +582,7 @@ do_sign_issuer_key() {
     local sign_data_hex cert
     sign_data_hex="${data_header}${cert_format}${issuer_pan}${cert_exp}${seq_num}${hash_alg}${pk_alg}${issuer_pk_len}${issuer_pk_exp_len}${issuer_pk_left}${hash}${data_trailer}"
     cert=$(printf '%s' "$sign_data_hex" | xxd -r -p \
-        | openssl pkeyutl -sign -inkey "$ca_key_file" -pkeyopt rsa_padding_mode:none \
+        | openssl pkeyutl -decrypt -inkey "$ca_key_file" -pkeyopt rsa_padding_mode:none \
         | xxd -p | tr -d '\n' | tr 'a-f' 'A-F')
 
     local cert_json

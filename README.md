@@ -115,4 +115,32 @@ make test
 ```
 
 Boots `build/live-image-amd64.hybrid.img` in QEMU with KVM (if available).
-The test USB image is attached as a USB mass storage device to exercise automount.
+The test USB image (`build/test-usb.img`) is attached as a USB mass storage device
+to exercise the automount and issuer-signing workflows. It contains two directories:
+`requests/` for incoming issuer signing requests and `certs/` for signed certificates
+written back by the CA menu.
+
+### Placing issuer signing requests on the test USB
+
+To stage a signing request on the test USB before booting, mount it with:
+
+```
+make mount-usb
+```
+
+This mounts the FAT32 partition at `mnt/test-usb`. Copy a `.csr.json` request file
+into `mnt/test-usb/requests/`, then unmount:
+
+```
+make umount-usb
+```
+
+An issuer signing request looks like this:
+
+```json
+{
+	"publicKey": "-----BEGIN PUBLIC KEY-----\nMIHNMA0GCSqGSIb3DQEBAQUAA4G7ADCBtwKBsQC7lrW31URpa+KoJUuZs7bu+ich\nKzKBhUlJ1VTPV52j+eB/gLEgz7E4D4CiO7ZlLgKd08/MyuGHJxf+i6TrEKGOLtVJ\nCv57bLWbSohsOPKa0kd5ahJ01Gq/iX2w+cKfe5Ehy7mekGq2w0IIGoCjvdlDvDB8\n/t1nRgi3t76vLVnKkiOgcun4Ikz9nLLdBDyqQ6e8EX5aSAtu1HxfAE+Th572vQnE\ntNcLSkXaA/Tiz3txWwIBAw==\n-----END PUBLIC KEY-----",
+	"applicationPan": "123456",
+	"certificateSequenceNumber": 1
+}
+```

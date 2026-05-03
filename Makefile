@@ -3,8 +3,9 @@ SHELL := /bin/bash
 IMAGE    := live-build
 VOLUME   := live-build-work
 PLATFORM := linux/amd64
-LIVE_IMG     := build/live-image-amd64.hybrid.img
-TEST_USB_IMG := build/test-usb.img
+LIVE_IMG          := build/live-image-amd64.hybrid.img
+TEST_USB_IMG      := build/test-usb.img
+TEST_USB_MOUNT    := mnt/test-usb
 
 DOCKER_IMAGE_STAMP    := .docker-image
 DOCKER_RUN_STAMP      := .docker-run
@@ -20,7 +21,7 @@ KVM_FLAGS   := $(if $(wildcard /dev/kvm),-enable-kvm -cpu host,-cpu Nehalem)
 DISPLAY_ARG := $(if $(filter Darwin,$(shell uname -s)),cocoa,gtk)
 
 
-.PHONY: all install test run interactive prune clean help
+.PHONY: all install test mount-usb umount-usb run interactive prune clean help
 
 all: $(LIVE_IMG)
 
@@ -51,6 +52,28 @@ test: $(LIVE_IMG) $(TEST_USB_IMG)
 	  -smp 2 \
 	  -vga virtio \
 	  -display $(DISPLAY_ARG)
+
+mount-usb: $(TEST_USB_IMG)
+	@mkdir -p $(TEST_USB_MOUNT)
+	if [ "$$(uname -s)" = "Darwin" ]; then \
+		DISK=$$(sudo hdiutil attach -imagekey diskimage-class=CRawDiskImage -nomount $(TEST_USB_IMG) | awk '/FAT/{print $$1}'); \
+		sudo mount -t msdos $$DISK $(TEST_USB_MOUNT); \
+	else \
+		LOOP=$$(sudo losetup --find --show --partscan $(TEST_USB_IMG)); \
+		sudo mount $${LOOP}p1 $(TEST_USB_MOUNT); \
+	fi
+	@echo "Mounted at $(TEST_USB_MOUNT)"
+
+umount-usb:
+	if [ "$$(uname -s)" = "Darwin" ]; then \
+		sudo hdiutil detach $(TEST_USB_MOUNT); \
+	else \
+		PART=$$(findmnt -n -o SOURCE $(TEST_USB_MOUNT)); \
+		LOOP=/dev/$$(lsblk -no PKNAME $$PART); \
+		sudo umount $(TEST_USB_MOUNT); \
+		sudo losetup -d $$LOOP; \
+	fi
+	@echo "Unmounted $(TEST_USB_MOUNT)"
 
 $(LIVE_IMG): $(DOCKER_RUN_STAMP)
 	mkdir -p build
@@ -99,6 +122,8 @@ help:
 	@echo "  all          Build and copy the live image to build/ (default)"
 	@echo "  install      Write the image to a USB drive (requires DEV=/dev/sdX)"
 	@echo "  test         Boot the image in QEMU"
+	@echo "  mount-usb    Mount the test USB image (override path: TEST_USB_MOUNT=...)"
+	@echo "  umount-usb   Unmount the test USB image and detach loop device"
 	@echo "  run          Run the live-build container"
 	@echo "  interactive  Like run, but drops into the container with /bin/bash"
 	@echo "  prune        Remove the persistent work volume"
