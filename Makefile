@@ -1,27 +1,31 @@
 SHELL := /bin/bash
 
 IMAGE    := live-build
-VOLUME   := live-build-work
+VOLUME   := live-build-cache
 PLATFORM := linux/amd64
 LIVE_IMG          := build/live-image-amd64.hybrid.img
 TEST_USB_IMG      := build/test-usb.img
 TEST_USB_MOUNT    := mnt/test-usb
 
-DOCKER_IMAGE_STAMP    := .docker-image
-DOCKER_RUN_STAMP      := .docker-run
-DOCKER_TEST_USB_STAMP := .docker-test-usb
-DOCKER_SRCS           := Dockerfile build-image.sh build-test-usb-image.sh $(shell find config -type f)
+DOCKER_IMAGE_STAMP := .docker-image
+DOCKER_SRCS        := Dockerfile build-image.sh build-test-usb-image.sh $(shell find config -type f)
 
+# Volume at /workspace/cache: lb stores downloaded packages there by default,
+# so they survive across runs without covering the rest of /workspace.
+# Bind-mount build/ so output lands on the host directly (no docker cp needed).
 RUN_FLAGS = \
   --platform $(PLATFORM) \
   --privileged \
-  -v $(VOLUME):/workspace
+  -v $(VOLUME):/workspace/cache \
+  -v $(CURDIR)/build:/workspace/build \
+  -e HOST_UID=$$(id -u) \
+  -e HOST_GID=$$(id -g)
 
 KVM_FLAGS   := $(if $(wildcard /dev/kvm),-enable-kvm -cpu host,-cpu Nehalem)
 DISPLAY_ARG := $(if $(filter Darwin,$(shell uname -s)),cocoa,gtk)
 
 
-.PHONY: all install test mount-usb umount-usb run interactive prune clean help
+.PHONY: all install test mount-usb umount-usb interactive clean distclean help
 
 all: $(LIVE_IMG)
 
@@ -75,57 +79,41 @@ umount-usb:
 	fi
 	@echo "Unmounted $(TEST_USB_MOUNT)"
 
-$(LIVE_IMG): $(DOCKER_RUN_STAMP)
+$(LIVE_IMG): $(DOCKER_IMAGE_STAMP)
 	mkdir -p build
-	cid=$$(docker create --platform $(PLATFORM) -v $(VOLUME):/workspace $(IMAGE)); \
-	docker cp $$cid:/workspace/live-image-amd64.hybrid.img build/; \
-	docker rm $$cid
-	touch $@
-
-$(TEST_USB_IMG): $(DOCKER_TEST_USB_STAMP)
-	mkdir -p build
-	cid=$$(docker create --platform $(PLATFORM) -v $(VOLUME):/workspace $(IMAGE)); \
-	docker cp $$cid:/workspace/test-usb.img build/; \
-	docker rm $$cid
-	touch $@
-
-$(DOCKER_RUN_STAMP): $(DOCKER_IMAGE_STAMP)
 	docker run --rm $(RUN_FLAGS) $(IMAGE)
-	touch $@
 
-$(DOCKER_TEST_USB_STAMP): $(DOCKER_IMAGE_STAMP)
+$(TEST_USB_IMG): $(DOCKER_IMAGE_STAMP)
+	mkdir -p build
 	docker run --rm $(RUN_FLAGS) --entrypoint build-test-usb-image.sh $(IMAGE)
-	touch $@
 
 $(DOCKER_IMAGE_STAMP): $(DOCKER_SRCS)
 	docker build --platform $(PLATFORM) -t $(IMAGE) .
 	touch $@
 
-run: $(DOCKER_RUN_STAMP)
-
 interactive: $(DOCKER_IMAGE_STAMP)
+	mkdir -p build
 	docker run --rm -it $(RUN_FLAGS) --entrypoint /bin/bash $(IMAGE)
 
-prune:
-	docker volume rm -f $(VOLUME)
+clean:
+	rm -rf build/
 
-clean: prune
+distclean: clean
 	docker ps -a --filter "ancestor=$(IMAGE)" -q | xargs -r docker rm -f
 	docker image rm -f $(IMAGE)
-	rm -f $(LIVE_IMG) $(TEST_USB_IMG) \
-	  $(DOCKER_IMAGE_STAMP) $(DOCKER_RUN_STAMP) $(DOCKER_TEST_USB_STAMP)
+	docker volume rm -f $(VOLUME)
+	rm -f $(DOCKER_IMAGE_STAMP)
 
 help:
 	@echo "Usage: make [target]"
 	@echo ""
 	@echo "Targets:"
-	@echo "  all          Build and copy the live image to build/ (default)"
+	@echo "  all          Build the live image to build/ (default)"
 	@echo "  install      Write the image to a USB drive (requires DEV=/dev/sdX)"
 	@echo "  test         Boot the image in QEMU"
 	@echo "  mount-usb    Mount the test USB image (override path: TEST_USB_MOUNT=...)"
 	@echo "  umount-usb   Unmount the test USB image and detach loop device"
-	@echo "  run          Run the live-build container"
-	@echo "  interactive  Like run, but drops into the container with /bin/bash"
-	@echo "  prune        Remove the persistent work volume"
-	@echo "  clean        Remove related containers, image, volume, and build artifacts"
+	@echo "  interactive  Drop into the build container with /bin/bash"
+	@echo "  clean        Remove build output"
+	@echo "  distclean    Remove build output, Docker image, and package cache"
 	@echo "  help         Print this help message"

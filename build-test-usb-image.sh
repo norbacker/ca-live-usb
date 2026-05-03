@@ -1,7 +1,8 @@
 #!/bin/bash
 set -euo pipefail
 
-TEST_USB_IMG=/workspace/test-usb.img
+mkdir -p build
+TEST_USB_IMG=build/test-usb.img
 TEST_USB_SIZE=16M
 
 echo "==> Creating test USB image ($TEST_USB_SIZE) ..."
@@ -15,5 +16,7 @@ echo ",,b;" | sfdisk "$TEST_USB_IMG"
 START=$(sfdisk --dump "$TEST_USB_IMG" | grep -oP 'start=\s*\K[0-9]+')
 mformat -i "$TEST_USB_IMG@@$((START * 512))" -v TEST-USB ::
 mmd -i "$TEST_USB_IMG@@$((START * 512))" ::requests ::certs
+
+[[ -n "${HOST_UID:-}" ]] && chown "$HOST_UID:${HOST_GID:-$HOST_UID}" "$TEST_USB_IMG"
 
 echo "==> Test USB image ready."
