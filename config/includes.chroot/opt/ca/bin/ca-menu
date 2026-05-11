@@ -112,7 +112,9 @@ do_init_cadata() {
         return
     fi
 
-    echo "  Found CA data partition: $part"
+    local part_size
+    part_size=$(lsblk -no SIZE "$part" 2>/dev/null | tr -d ' ') || part_size="unknown"
+    echo "  Found CA data partition: $part ($part_size)"
     local existing_type
     existing_type=$(blkid -o value -s TYPE "$part" 2>/dev/null) || true
     if [[ -n "$existing_type" ]]; then
@@ -485,6 +487,7 @@ do_sign_issuer_key() {
         return
     fi
 
+    echo ""
     echo "  Available CA keypairs:"
     printf "    %-10s  %s\n" "RID" "Index"
     printf "    %-10s  %s\n" "──────────" "─────"
