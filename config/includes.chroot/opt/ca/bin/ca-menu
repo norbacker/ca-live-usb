@@ -347,7 +347,7 @@ do_export_pubkey() {
     cat > "$USB_CERTS_DIR/$name.pub.json" <<EOF
 {
     "rid": "${rid^^}",
-    "index": "$index",
+    "index": "$index_hex",
     "modulus": "$modulus",
     "exponent": "$exponent_hex",
     "checksum": "$checksum"
